@@ -36,6 +36,8 @@ class WebSocketService {
   bool _streamStarted = false;
   bool _fatalError = false;
   int _reconnectAttempts = 0;
+  int _inboundCount = 0;
+  DateTime _lastNormalLoggedAt = DateTime.fromMillisecondsSinceEpoch(0);
   static const int _maxReconnectDelaySec = 10;
 
   final ValueNotifier<WebSocketConnectionStatus> statusNotifier =
@@ -174,6 +176,17 @@ class WebSocketService {
       framesSentNotifier.value++;
       final kb = (jpegBytes.length / 1024).toStringAsFixed(1);
       LogService.wsOut('WebSocket', 'Frame #$frameId sent ($kb KB JPEG, binary)');
+
+      // The server should reply with DETECTION_STATUS as soon as it decodes a
+      // frame. Silence after this many frames means it is receiving bytes it
+      // can't process (JPEG decode failure, or the model stalled).
+      if (framesSentNotifier.value == 40 && _inboundCount == 0) {
+        LogService.warn(
+          'WebSocket',
+          '40 frames sent, no analysis received — check the backend console '
+          '(JPEG decode failure or model stall on its side).',
+        );
+      }
       return true;
     } catch (e, stackTrace) {
       LogService.error('WebSocket', 'Failed to transmit Frame #$frameId', error: e, stackTrace: stackTrace);
@@ -186,6 +199,7 @@ class WebSocketService {
       final String text = rawData is String ? rawData : utf8.decode(rawData as List<int>);
       final Map<String, dynamic> jsonMap = json.decode(text) as Map<String, dynamic>;
       final type = (jsonMap['type'] as String?)?.toUpperCase();
+      _inboundCount++;
 
       switch (type) {
         case 'ERROR':
@@ -200,6 +214,7 @@ class WebSocketService {
         case 'STREAM_STARTED':
           _streamStarted = true;
           _reconnectAttempts = 0;
+          _inboundCount = 0;
           statusNotifier.value = WebSocketConnectionStatus.connected;
           LogService.wsIn('WebSocket', '🟢 Stream accepted by server', payload: text);
           break;
@@ -222,9 +237,19 @@ class WebSocketService {
 
         case 'DETECTION_STATUS':
         default:
-          // Bare {"state":"normal",...} or DETECTION_STATUS — driver is fine.
-          if ((jsonMap['state']?.toString() ?? '') == 'normal') {
+          final state = jsonMap['state']?.toString() ?? '';
+          if (state == 'normal') {
             latestAiEventNotifier.value = null;
+            // Throttle the "driver looks fine" heartbeat so it doesn't flood.
+            final now = DateTime.now();
+            if (now.difference(_lastNormalLoggedAt).inMilliseconds >= 2000) {
+              _lastNormalLoggedAt = now;
+              LogService.wsIn(
+                'WebSocket',
+                '✅ Server analysing frames — driver normal (msg #$_inboundCount)',
+                payload: text,
+              );
+            }
           } else {
             LogService.wsIn('WebSocket', 'Server message: $text', payload: text);
           }
