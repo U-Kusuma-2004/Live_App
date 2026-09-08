@@ -21,10 +21,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('VEHICLE CAMERA POC'), findsOneWidget);
-    expect(find.text('USER / VEHICLE NAME'), findsOneWidget);
-    expect(find.text('WEBSOCKET URL'), findsOneWidget);
-    expect(find.text('NEXT'), findsOneWidget);
+    expect(find.text('Fleet live console'), findsOneWidget);
+    expect(find.text('Vehicle name'), findsOneWidget);
+    expect(find.text('WebSocket endpoint'), findsOneWidget);
+    expect(find.text('Start session'), findsOneWidget);
     expect(find.text('TRUCK_001'), findsOneWidget);
     expect(find.text('wss://test.runpod.io/ws'), findsOneWidget);
   });
@@ -45,8 +45,8 @@ void main() {
       ),
     );
 
-    expect(find.text('DROWSINESS DETECTED'), findsOneWidget);
-    expect(find.textContaining('Confidence: 94%'), findsOneWidget);
+    expect(find.text('Drowsiness'), findsOneWidget);
+    expect(find.textContaining('Confidence 94%'), findsOneWidget);
   });
 
   testWidgets('TelemetryTile renders metric and unit correctly', (WidgetTester tester) async {
@@ -63,7 +63,7 @@ void main() {
       ),
     );
 
-    expect(find.text('SPEED'), findsOneWidget);
+    expect(find.text('Speed'), findsOneWidget);
     expect(find.text('42.5'), findsOneWidget);
     expect(find.text('km/h'), findsOneWidget);
   });
@@ -81,7 +81,44 @@ void main() {
       ),
     );
 
-    expect(find.text('WS: '), findsOneWidget);
-    expect(find.text('CONNECTED'), findsOneWidget);
+    expect(find.text('WS'), findsOneWidget);
+    expect(find.text('Connected'), findsOneWidget);
+  });
+
+  testWidgets('StatusBadge stays visible inside a Row of Expanded (connection strip)',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Row(
+            children: [
+              Expanded(
+                child: StatusBadge(
+                  label: 'Camera',
+                  value: 'streaming',
+                  statusType: BadgeStatusType.active,
+                  compact: true,
+                ),
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: StatusBadge(
+                  label: 'Link',
+                  value: 'reconnecting',
+                  statusType: BadgeStatusType.pending,
+                  compact: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    // The min-row + Flexible bug collapsed these to a ~9px invisible dot.
+    expect(tester.getSize(find.text('Camera')).width, greaterThan(20));
+    expect(tester.getSize(find.byType(StatusBadge).first).height, greaterThan(28));
+    expect(find.text('Streaming'), findsOneWidget);
+    expect(find.text('Reconnecting'), findsOneWidget);
   });
 }

@@ -1,113 +1,132 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/ai_event.dart';
+import '../theme/app_theme.dart';
 
+/// Shows AI model status. Quiet and neutral while nothing is wrong; when an
+/// event arrives it swaps in with colour and a raised edge so a driver or
+/// dispatcher catches it immediately.
 class AiEventBanner extends StatelessWidget {
   final AiEvent? event;
 
-  const AiEventBanner({
-    super.key,
-    required this.event,
-  });
+  const AiEventBanner({super.key, required this.event});
 
   @override
   Widget build(BuildContext context) {
-    if (event == null) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: const Color(0xFF131B2A),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: const Color(0xFF1E293B),
-            width: 1,
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 320),
+      switchInCurve: Curves.easeOutBack,
+      transitionBuilder: (child, anim) => FadeTransition(
+        opacity: anim,
+        child: SlideTransition(
+          position: Tween(begin: const Offset(0, -0.06), end: Offset.zero).animate(anim),
+          child: child,
+        ),
+      ),
+      child: event == null
+          ? const _IdleBanner(key: ValueKey('idle'))
+          : _AlertBanner(key: ValueKey(event!.timestamp), event: event!),
+    );
+  }
+}
+
+class _IdleBanner extends StatelessWidget {
+  const _IdleBanner({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadii.tile),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(7),
+            decoration: BoxDecoration(
+              color: AppColors.go.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: const Icon(Icons.shield_outlined, size: 16, color: AppColors.go),
           ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E293B),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: const Icon(
-                Icons.smart_toy_outlined,
-                size: 16,
-                color: Color(0xFF64748B),
-              ),
-            ),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'AI EVENT STATUS',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.8,
-                      color: Color(0xFF64748B),
-                    ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'AI monitoring',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.inkFaint,
                   ),
-                  SizedBox(height: 2),
-                  Text(
-                    'No alerts detected • Model Active',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: Color(0xFF94A3B8),
-                    ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Model active — no alerts',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.ink,
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
-      );
-    }
+          ),
+        ],
+      ),
+    );
+  }
+}
 
-    final isSevere = event!.event.toUpperCase().contains('DROWSINESS') ||
-        event!.event.toUpperCase().contains('COLLISION') ||
-        event!.event.toUpperCase().contains('ALERT') ||
-        event!.confidence > 0.85;
+class _AlertBanner extends StatelessWidget {
+  final AiEvent event;
+  const _AlertBanner({super.key, required this.event});
 
-    final alertColor = isSevere ? const Color(0xFFFF3366) : const Color(0xFFFFB703);
-    final eventTime = DateTime.fromMillisecondsSinceEpoch(event!.timestamp * 1000);
-    final timeStr = DateFormat('HH:mm:ss').format(eventTime);
+  @override
+  Widget build(BuildContext context) {
+    final e = event.event.toUpperCase();
+    final severe = e.contains('DROWSINESS') ||
+        e.contains('COLLISION') ||
+        e.contains('ALERT') ||
+        event.confidence > 0.85;
+    final color = severe ? AppColors.stop : AppColors.caution;
+    final time = DateFormat('HH:mm:ss')
+        .format(DateTime.fromMillisecondsSinceEpoch(event.timestamp * 1000));
 
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: alertColor.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: alertColor.withValues(alpha: 0.6),
-          width: 1.5,
-        ),
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(AppRadii.tile),
+        border: Border.all(color: color.withValues(alpha: 0.55), width: 1.4),
         boxShadow: [
           BoxShadow(
-            color: alertColor.withValues(alpha: 0.2),
-            blurRadius: 10,
-            spreadRadius: 1,
+            color: color.withValues(alpha: 0.18),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
-            padding: const EdgeInsets.all(10),
+            padding: const EdgeInsets.all(9),
             decoration: BoxDecoration(
-              color: alertColor.withValues(alpha: 0.2),
+              color: color.withValues(alpha: 0.16),
               shape: BoxShape.circle,
             ),
             child: Icon(
-              isSevere ? Icons.warning_amber_rounded : Icons.info_outline,
-              color: alertColor,
-              size: 22,
+              severe ? Icons.warning_amber_rounded : Icons.info_outline_rounded,
+              color: color,
+              size: 20,
             ),
           ),
           const SizedBox(width: 12),
@@ -117,45 +136,40 @@ class AiEventBanner extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'AI EVENT DETECTED',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.0,
-                        color: alertColor,
+                    Expanded(
+                      child: Text(
+                        _title(event.event),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.ink,
+                        ),
                       ),
                     ),
+                    const SizedBox(width: 8),
                     Text(
-                      timeStr,
+                      time,
                       style: const TextStyle(
-                        fontSize: 10,
+                        fontSize: 11,
                         fontWeight: FontWeight.w600,
-                        fontFamily: 'monospace',
-                        color: Color(0xFF94A3B8),
+                        fontFamily: kMonoFont,
+                        color: AppColors.inkSoft,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 Text(
-                  '${event!.event.toUpperCase()} DETECTED',
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
-                    color: Color(0xFFF8FAFC),
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Confidence: ${event!.formattedConfidence}  •  Vehicle: ${event!.vehicleId}',
+                  'Confidence ${event.formattedConfidence}  ·  ${event.vehicleId}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFFCBD5E1),
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.inkSoft,
                   ),
                 ),
               ],
@@ -164,5 +178,10 @@ class AiEventBanner extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _title(String raw) {
+    final words = raw.replaceAll('_', ' ').trim().toLowerCase().split(RegExp(r'\s+'));
+    return words.map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1)).join(' ');
   }
 }

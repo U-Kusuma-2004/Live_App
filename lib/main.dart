@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'screens/config_screen.dart';
 import 'services/log_service.dart';
+import 'theme/app_theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,13 +25,14 @@ void main() {
     return true;
   };
 
-  // Set system UI styling for seamless edge-to-edge dark theme
+  // Edge-to-edge, dark icons on the light instrument-panel surface.
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-      systemNavigationBarColor: Color(0xFF0A0E17),
-      systemNavigationBarIconBrightness: Brightness.light,
+      statusBarIconBrightness: Brightness.dark,
+      statusBarBrightness: Brightness.light,
+      systemNavigationBarColor: Colors.white,
+      systemNavigationBarIconBrightness: Brightness.dark,
     ),
   );
 
@@ -43,31 +45,10 @@ class LiveCameraPocApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const bgDark = Color(0xFF0A0E17);
-    const surfaceDark = Color(0xFF131B2A);
-    const primaryCyan = Color(0xFF00E5FF);
-
     return MaterialApp(
-      title: 'Vehicle Camera POC',
+      title: 'Fleet Live Console',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: bgDark,
-        colorScheme: const ColorScheme.dark(
-          primary: primaryCyan,
-          secondary: Color(0xFF00F5A0),
-          surface: surfaceDark,
-          error: Color(0xFFFF3366),
-        ),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: surfaceDark,
-          foregroundColor: Colors.white,
-          elevation: 0,
-          centerTitle: false,
-        ),
-        fontFamily: 'Roboto',
-      ),
+      theme: buildAppTheme(),
       home: const ConfigScreen(),
     );
   }

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:intl/intl.dart';
 
 enum LogLevel {
@@ -144,11 +145,27 @@ class LogService {
       _logs.removeAt(0);
     }
 
-    logsNotifier.value = List.unmodifiable(_logs);
-    _streamController.add(entry);
-
-    // Print to terminal console
+    // Print to terminal console immediately.
     debugPrint(entry.toString());
+
+    // Notifying listeners synchronously is unsafe if _add is called while a
+    // frame is being built/laid out/painted (e.g. from FlutterError.onError
+    // reporting a layout overflow). In that case, defer to after the frame.
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.persistentCallbacks ||
+        phase == SchedulerPhase.midFrameMicrotasks ||
+        phase == SchedulerPhase.transientCallbacks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) => _notify(entry));
+    } else {
+      _notify(entry);
+    }
+  }
+
+  static void _notify(LogEntry entry) {
+    logsNotifier.value = List.unmodifiable(_logs);
+    if (!_streamController.isClosed) {
+      _streamController.add(entry);
+    }
   }
 
   static void clear() {

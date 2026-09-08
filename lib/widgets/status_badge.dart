@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
 
 enum BadgeStatusType {
   active,
@@ -8,11 +9,15 @@ enum BadgeStatusType {
   inactive,
 }
 
+/// A compact status pill: a state dot (pulsing while live or pending), a
+/// caption, and the current value. Designed to sit inside an Expanded so the
+/// value ellipsizes instead of clipping on narrow screens.
 class StatusBadge extends StatefulWidget {
   final String label;
   final String value;
   final BadgeStatusType statusType;
   final IconData? icon;
+  final bool compact;
 
   const StatusBadge({
     super.key,
@@ -20,6 +25,7 @@ class StatusBadge extends StatefulWidget {
     required this.value,
     required this.statusType,
     this.icon,
+    this.compact = false,
   });
 
   @override
@@ -28,128 +34,130 @@ class StatusBadge extends StatefulWidget {
 
 class _StatusBadgeState extends State<StatusBadge>
     with SingleTickerProviderStateMixin {
-  late AnimationController _pulseController;
-  late Animation<double> _pulseAnimation;
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  );
+
+  bool get _animated =>
+      widget.statusType == BadgeStatusType.active ||
+      widget.statusType == BadgeStatusType.pending;
 
   @override
   void initState() {
     super.initState();
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    );
-    _pulseAnimation = Tween<double>(begin: 0.4, end: 1.0).animate(
-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
-    );
-
-    if (widget.statusType == BadgeStatusType.active ||
-        widget.statusType == BadgeStatusType.pending) {
-      _pulseController.repeat(reverse: true);
-    }
+    if (_animated) _pulse.repeat(reverse: true);
   }
 
   @override
   void didUpdateWidget(covariant StatusBadge oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.statusType == BadgeStatusType.active ||
-        widget.statusType == BadgeStatusType.pending) {
-      if (!_pulseController.isAnimating) {
-        _pulseController.repeat(reverse: true);
-      }
-    } else {
-      _pulseController.stop();
-      _pulseController.value = 1.0;
+    if (_animated && !_pulse.isAnimating) {
+      _pulse.repeat(reverse: true);
+    } else if (!_animated && _pulse.isAnimating) {
+      _pulse.stop();
+      _pulse.value = 1;
     }
   }
 
   @override
   void dispose() {
-    _pulseController.dispose();
+    _pulse.dispose();
     super.dispose();
   }
 
-  Color _getStatusColor() {
+  Color get _color {
     switch (widget.statusType) {
       case BadgeStatusType.active:
-        return const Color(0xFF00F5A0); // Neon Mint Green
+        return AppColors.go;
       case BadgeStatusType.ready:
-        return const Color(0xFF00E5FF); // Cyber Cyan
+        return AppColors.brand;
       case BadgeStatusType.pending:
-        return const Color(0xFFFFB703); // Amber Yellow
+        return AppColors.caution;
       case BadgeStatusType.error:
-        return const Color(0xFFFF3366); // Warning Red
+        return AppColors.stop;
       case BadgeStatusType.inactive:
-        return const Color(0xFF6B7280); // Cool Slate Gray
+        return AppColors.inkFaint;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final statusColor = _getStatusColor();
+    final color = _color;
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      padding: EdgeInsets.symmetric(
+        horizontal: widget.compact ? 10 : 12,
+        vertical: widget.compact ? 8 : 10,
+      ),
       decoration: BoxDecoration(
-        color: const Color(0xFF131B2A),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: statusColor.withValues(alpha: 0.35),
-          width: 1,
-        ),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadii.tile),
+        border: Border.all(color: color.withValues(alpha: 0.28)),
+        boxShadow: AppShadows.card,
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
           AnimatedBuilder(
-            animation: _pulseAnimation,
-            builder: (context, child) {
+            animation: _pulse,
+            builder: (context, _) {
+              final t = _animated ? _pulse.value : 1.0;
               return Container(
-                width: 8,
-                height: 8,
+                width: 9,
+                height: 9,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: statusColor.withValues(
-                    alpha: (widget.statusType == BadgeStatusType.active ||
-                            widget.statusType == BadgeStatusType.pending)
-                        ? _pulseAnimation.value
-                        : 1.0,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: statusColor.withValues(alpha: 0.6),
-                      blurRadius: 6,
-                      spreadRadius: 1,
-                    ),
-                  ],
+                  color: color,
+                  boxShadow: _animated
+                      ? [
+                          BoxShadow(
+                            color: color.withValues(alpha: 0.45 * t),
+                            blurRadius: 8,
+                            spreadRadius: 2 * t,
+                          ),
+                        ]
+                      : null,
                 ),
               );
             },
           ),
-          const SizedBox(width: 8),
-          if (widget.icon != null) ...[
-            Icon(widget.icon, size: 14, color: Colors.white70),
-            const SizedBox(width: 4),
-          ],
-          Text(
-            '${widget.label}: ',
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF94A3B8),
-              letterSpacing: 0.4,
-            ),
-          ),
-          Text(
-            widget.value.toUpperCase(),
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              color: statusColor,
-              letterSpacing: 0.6,
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.inkFaint,
+                  ),
+                ),
+                Text(
+                  _pretty(widget.value),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  softWrap: false,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: color == AppColors.inkFaint ? AppColors.inkSoft : color,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
       ),
     );
   }
+
+  /// "reconnecting" -> "Reconnecting"
+  String _pretty(String raw) =>
+      raw.isEmpty ? raw : raw[0].toUpperCase() + raw.substring(1);
 }

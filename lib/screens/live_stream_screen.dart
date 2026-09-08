@@ -9,10 +9,13 @@ import '../services/gps_service.dart';
 import '../services/log_service.dart';
 import '../services/permission_service.dart';
 import '../services/websocket_service.dart';
+import '../theme/app_theme.dart';
 import '../widgets/ai_event_banner.dart';
 import '../widgets/live_log_console.dart';
+import '../widgets/pressable.dart';
 import '../widgets/status_badge.dart';
 import '../widgets/telemetry_tile.dart';
+import '../widgets/tilt_card.dart';
 
 class LiveStreamScreen extends StatefulWidget {
   final String vehicleId;
@@ -42,7 +45,8 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   @override
   void initState() {
     super.initState();
-    LogService.info('App', 'Entered LiveStreamScreen (Vehicle: "${widget.vehicleId}", URL: "${widget.webSocketUrl}")');
+    LogService.info('App',
+        'Entered LiveStreamScreen (Vehicle: "${widget.vehicleId}", URL: "${widget.webSocketUrl}")');
     _bootstrapServices();
   }
 
@@ -52,7 +56,6 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
       _permissionError = null;
     });
 
-    // 1. Request runtime permissions
     final permissionResult = await PermissionService.requestPermissions();
     if (!permissionResult.isAllGranted) {
       if (mounted) {
@@ -68,7 +71,6 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     if (!mounted) return;
     setState(() => _isPermissionsGranted = true);
 
-    // 2. Initialize Camera and GPS concurrently
     await Future.wait([
       _cameraService.initializeCamera(),
       _gpsService.initializeGps(),
@@ -80,48 +82,30 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     }
   }
 
-  /// START streaming camera + GPS over WebSocket
   Future<void> _onStart() async {
     if (_isStreaming) return;
-
     LogService.info('App', 'User clicked START streaming button');
     setState(() => _isStreaming = true);
     _wsService.resetCounters();
 
-    // 1. Connect to WebSocket
-    await _wsService.connect(widget.webSocketUrl);
-
-    // 2. Start Camera Frame Streaming (~10 FPS)
+    await _wsService.connect(widget.webSocketUrl, vehicleId: widget.vehicleId);
     await _cameraService.startStreaming(
       vehicleId: widget.vehicleId,
-      onFrame: (FramePayload framePayload) {
-        _wsService.sendFrame(framePayload);
-      },
+      onFrame: (FramePayload p) => _wsService.sendFrame(p),
     );
-
-    // 3. Start GPS Telemetry Transmission (1 Hz)
     _gpsService.startTransmission(
       vehicleId: widget.vehicleId,
-      onGpsPacket: (GpsPayload gpsPayload) {
-        _wsService.sendGps(gpsPayload);
-      },
+      onGpsPacket: (GpsPayload p) => _wsService.sendGps(p),
     );
   }
 
-  /// STOP streaming camera + GPS, cleanly close WebSocket, keep viewfinder alive
   Future<void> _onStop() async {
     if (!_isStreaming) return;
-
     LogService.info('App', 'User clicked STOP streaming button');
     setState(() => _isStreaming = false);
 
-    // 1. Stop Camera Streaming
     await _cameraService.stopStreaming();
-
-    // 2. Stop GPS transmission
     _gpsService.stopTransmission();
-
-    // 3. Disconnect WebSocket
     await _wsService.disconnect();
     LogService.info('App', 'Streaming halted cleanly. Console in standby.');
   }
@@ -136,8 +120,8 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     super.dispose();
   }
 
-  BadgeStatusType _getWsBadgeType(WebSocketConnectionStatus status) {
-    switch (status) {
+  BadgeStatusType _wsBadge(WebSocketConnectionStatus s) {
+    switch (s) {
       case WebSocketConnectionStatus.connected:
         return BadgeStatusType.active;
       case WebSocketConnectionStatus.connecting:
@@ -150,8 +134,8 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     }
   }
 
-  BadgeStatusType _getCameraBadgeType(CameraStreamStatus status) {
-    switch (status) {
+  BadgeStatusType _cameraBadge(CameraStreamStatus s) {
+    switch (s) {
       case CameraStreamStatus.streaming:
         return BadgeStatusType.active;
       case CameraStreamStatus.ready:
@@ -165,8 +149,8 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     }
   }
 
-  BadgeStatusType _getGpsBadgeType(GpsStatus status) {
-    switch (status) {
+  BadgeStatusType _gpsBadge(GpsStatus s) {
+    switch (s) {
       case GpsStatus.streaming:
         return BadgeStatusType.active;
       case GpsStatus.ready:
@@ -180,138 +164,99 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     }
   }
 
+  // ---------------------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
-    const primaryCyan = Color(0xFF00E5FF);
-    const bgDark = Color(0xFF0A0E17);
-    const surfaceDark = Color(0xFF131B2A);
-    const borderDark = Color(0xFF22304A);
-
     return Scaffold(
-      backgroundColor: bgDark,
       appBar: AppBar(
-        backgroundColor: surfaceDark,
-        elevation: 0,
+        titleSpacing: 4,
+        leadingWidth: 44,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: Color(0xFF94A3B8)),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+          color: AppColors.inkSoft,
           onPressed: () {
             _onStop();
             Navigator.of(context).pop();
           },
         ),
-        title: Row(
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: primaryCyan.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: primaryCyan.withValues(alpha: 0.4)),
-              ),
-              child: Text(
-                widget.vehicleId,
-                style: const TextStyle(
-                  color: primaryCyan,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.0,
-                ),
-              ),
+            Text(
+              'Live console',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
             ),
-            const SizedBox(width: 8),
-            const Text(
-              'LIVE CONSOLE',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.8,
-                color: Color(0xFF94A3B8),
-              ),
+            const SizedBox(height: 1),
+            Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    widget.vehicleId,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.brand,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
         actions: [
-          // Toggle in-app log monitor
           IconButton(
             icon: Icon(
-              Icons.terminal_rounded,
-              color: _showLogConsole ? primaryCyan : const Color(0xFF64748B),
-              size: 20,
+              _showLogConsole ? Icons.terminal_rounded : Icons.terminal_outlined,
             ),
-            tooltip: 'Toggle Logs Console',
+            color: _showLogConsole ? AppColors.brand : AppColors.inkFaint,
+            tooltip: 'Toggle live monitor',
             onPressed: () => setState(() => _showLogConsole = !_showLogConsole),
           ),
-          ValueListenableBuilder<WebSocketConnectionStatus>(
-            valueListenable: _wsService.statusNotifier,
-            builder: (context, status, _) {
-              return Padding(
-                padding: const EdgeInsets.only(right: 16.0),
-                child: Center(
-                  child: StatusBadge(
-                    label: 'WS',
-                    value: status.name,
-                    statusType: _getWsBadgeType(status),
-                  ),
-                ),
-              );
-            },
-          ),
+          const SizedBox(width: 4),
         ],
       ),
       body: SafeArea(
+        top: false,
         child: _isInitializing
-            ? const Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircularProgressIndicator(color: primaryCyan),
-                    SizedBox(height: 16),
-                    Text(
-                      'Initializing Camera & Sensors...',
-                      style: TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
-                    ),
-                  ],
-                ),
-              )
+            ? _busy('Starting camera and sensors…')
             : !_isPermissionsGranted
-                ? _buildPermissionFallback()
+                ? _permissionFallback()
                 : LayoutBuilder(
                     builder: (context, constraints) {
-                      final isLandscape = constraints.maxWidth > constraints.maxHeight;
-
-                      if (isLandscape) {
+                      final landscape = constraints.maxWidth > constraints.maxHeight;
+                      if (landscape) {
                         return Row(
                           children: [
-                            Expanded(
-                              flex: 5,
-                              child: _buildCameraViewfinder(),
-                            ),
-                            Container(width: 1, color: borderDark),
+                            Expanded(flex: 5, child: _viewfinderArea()),
                             Expanded(
                               flex: 5,
                               child: SingleChildScrollView(
                                 padding: const EdgeInsets.all(16),
-                                child: _buildDashboardContent(),
+                                child: _dashboard(),
                               ),
                             ),
                           ],
                         );
                       }
-
                       return Column(
                         children: [
-                          // Top viewfinder
                           Expanded(
-                            flex: _showLogConsole ? 4 : 5,
-                            child: _buildCameraViewfinder(),
+                            flex: _showLogConsole ? 5 : 6,
+                            child: _viewfinderArea(),
                           ),
-                          Container(height: 1, color: borderDark),
-                          // Bottom telemetry, controls and live log monitor
                           Expanded(
-                            flex: _showLogConsole ? 6 : 5,
+                            flex: _showLogConsole ? 7 : 6,
                             child: SingleChildScrollView(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                              child: _buildDashboardContent(),
+                              padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
+                              child: _dashboard(),
                             ),
                           ),
                         ],
@@ -322,34 +267,58 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     );
   }
 
-  Widget _buildPermissionFallback() {
+  Widget _busy(String message) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(),
+          const SizedBox(height: 16),
+          Text(message,
+              style: const TextStyle(color: AppColors.inkSoft, fontSize: 13)),
+        ],
+      ),
+    );
+  }
+
+  Widget _permissionFallback() {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(28.0),
+        padding: const EdgeInsets.all(28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.security_rounded, size: 48, color: Color(0xFFFF3366)),
-            const SizedBox(height: 16),
-            const Text(
-              'Permissions Required',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.stop.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.lock_outline_rounded,
+                  size: 30, color: AppColors.stop),
             ),
+            const SizedBox(height: 18),
+            Text('Camera and location needed',
+                style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
-              _permissionError ?? 'Please grant Camera and Location access to proceed.',
+              _permissionError ??
+                  'Grant camera and location access so the console can stream the feed and GPS.',
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+              style: const TextStyle(color: AppColors.inkSoft, fontSize: 13, height: 1.4),
             ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
+            const SizedBox(height: 22),
+            Pressable(
               onPressed: _bootstrapServices,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00E5FF),
-                foregroundColor: const Color(0xFF0A0E17),
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 22),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.refresh_rounded, size: 18),
+                  SizedBox(width: 8),
+                  Text('Try again'),
+                ],
               ),
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Grant Permissions'),
             ),
           ],
         ),
@@ -357,320 +326,340 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     );
   }
 
-  Widget _buildCameraViewfinder() {
+  // ---------------------------------------------------------------------------
+
+  Widget _viewfinderArea() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+      child: TiltCard(
+        child: TweenAnimationBuilder<double>(
+          duration: const Duration(milliseconds: 420),
+          curve: Curves.easeOutCubic,
+          tween: Tween(begin: 0.96, end: 1),
+          builder: (context, scale, child) =>
+              Transform.scale(scale: scale, child: child),
+          child: Container(
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0C0F14),
+              borderRadius: BorderRadius.circular(AppRadii.hero),
+              boxShadow: AppShadows.raised,
+              border: Border.all(
+                color: _isStreaming
+                    ? AppColors.brand.withValues(alpha: 0.9)
+                    : AppColors.line,
+                width: _isStreaming ? 1.6 : 1,
+              ),
+            ),
+            child: _viewfinder(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _viewfinder() {
     final controller = _cameraService.controller;
-
-    return Container(
-      color: Colors.black,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // Live Camera Preview
-          if (_cameraService.isReady && controller != null)
-            Center(
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (_cameraService.isReady && controller != null)
+          FittedBox(
+            fit: BoxFit.cover,
+            clipBehavior: Clip.hardEdge,
+            child: SizedBox(
+              width: controller.value.previewSize?.height ?? 720,
+              height: controller.value.previewSize?.width ?? 480,
               child: CameraPreview(controller),
-            )
-          else
-            const Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.videocam_off_outlined, size: 42, color: Color(0xFF475569)),
-                  SizedBox(height: 10),
-                  Text(
-                    'Camera Hardware Initializing...',
-                    style: TextStyle(color: Color(0xFF64748B), fontSize: 13),
-                  ),
-                ],
-              ),
             ),
+          )
+        else
+          const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.videocam_off_outlined, size: 38, color: Color(0xFF56606E)),
+                SizedBox(height: 10),
+                Text('Camera warming up…',
+                    style: TextStyle(color: Color(0xFF7A8494), fontSize: 12)),
+              ],
+            ),
+          ),
 
-          // HUD Viewfinder Reticle Overlay
+        // Recording rail — the one bold, subject-grounded flourish.
+        if (_isStreaming)
           Positioned(
-            top: 16,
-            left: 16,
+            top: 0,
+            left: 0,
+            right: 0,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              height: 3,
               decoration: BoxDecoration(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    _isStreaming ? Icons.circle : Icons.stop_circle_outlined,
-                    size: 10,
-                    color: _isStreaming ? const Color(0xFFFF3366) : const Color(0xFF94A3B8),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _isStreaming ? 'REC / 10 FPS' : 'STANDBY',
-                    style: TextStyle(
-                      color: _isStreaming ? const Color(0xFFFF3366) : const Color(0xFF94A3B8),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      fontFamily: 'monospace',
-                    ),
+                color: AppColors.brand,
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.brand.withValues(alpha: 0.7),
+                    blurRadius: 10,
                   ),
                 ],
               ),
             ),
           ),
 
-          // Target FPS and Frame count badge
-          Positioned(
-            top: 16,
-            right: 16,
-            child: ValueListenableBuilder<double>(
-              valueListenable: _cameraService.currentFpsNotifier,
-              builder: (context, fps, _) {
-                return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    '${fps.toStringAsFixed(1)} FPS',
-                    style: const TextStyle(
-                      color: Color(0xFF00E5FF),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      fontFamily: 'monospace',
-                    ),
-                  ),
-                );
-              },
+        Positioned(
+          top: 12,
+          left: 12,
+          child: _hudChip(
+            icon: _isStreaming ? Icons.fiber_manual_record_rounded : Icons.pause_rounded,
+            iconColor: _isStreaming ? AppColors.stop : const Color(0xFFB6BECC),
+            label: _isStreaming ? 'Recording · 10 fps' : 'Standby',
+          ),
+        ),
+        Positioned(
+          top: 12,
+          right: 12,
+          child: ValueListenableBuilder<double>(
+            valueListenable: _cameraService.currentFpsNotifier,
+            builder: (context, fps, _) => _hudChip(
+              label: '${fps.toStringAsFixed(1)} fps',
+              labelColor: const Color(0xFF7CC4FF),
             ),
           ),
+        ),
+      ],
+    );
+  }
 
-          // Corner HUD crosshairs
-          const Positioned(
-            top: 12,
-            left: 12,
-            child: Icon(Icons.crop_free, color: Colors.white24, size: 28),
-          ),
-          const Positioned(
-            bottom: 12,
-            right: 12,
-            child: Icon(Icons.crop_free, color: Colors.white24, size: 28),
+  Widget _hudChip({
+    IconData? icon,
+    Color? iconColor,
+    required String label,
+    Color labelColor = Colors.white,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(AppRadii.pill),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 10, color: iconColor),
+            const SizedBox(width: 5),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              color: labelColor,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              fontFamily: kMonoFont,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildDashboardContent() {
-    const primaryCyan = Color(0xFF00E5FF);
-    const neonGreen = Color(0xFF00F5A0);
-    const dangerRed = Color(0xFFFF3366);
+  // ---------------------------------------------------------------------------
 
+  Widget _dashboard() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Status Row (WebSocket, Camera, GPS)
+        // Connection strip — three equal pills, WS moved out of the AppBar.
         Row(
           children: [
             Expanded(
               child: ValueListenableBuilder<CameraStreamStatus>(
                 valueListenable: _cameraService.statusNotifier,
-                builder: (context, status, _) {
-                  return StatusBadge(
-                    label: 'Camera',
-                    value: status.name,
-                    statusType: _getCameraBadgeType(status),
-                  );
-                },
+                builder: (context, s, _) => StatusBadge(
+                  label: 'Camera',
+                  value: s.name,
+                  statusType: _cameraBadge(s),
+                  compact: true,
+                ),
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
               child: ValueListenableBuilder<GpsStatus>(
                 valueListenable: _gpsService.statusNotifier,
-                builder: (context, status, _) {
-                  return StatusBadge(
-                    label: 'GPS',
-                    value: status.name,
-                    statusType: _getGpsBadgeType(status),
-                  );
-                },
+                builder: (context, s, _) => StatusBadge(
+                  label: 'GPS',
+                  value: s.name,
+                  statusType: _gpsBadge(s),
+                  compact: true,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: ValueListenableBuilder<WebSocketConnectionStatus>(
+                valueListenable: _wsService.statusNotifier,
+                builder: (context, s, _) => StatusBadge(
+                  label: 'Link',
+                  value: s.name,
+                  statusType: _wsBadge(s),
+                  compact: true,
+                ),
               ),
             ),
           ],
         ),
         const SizedBox(height: 12),
 
-        // AI Event Real-Time Alert Banner
         ValueListenableBuilder<AiEvent?>(
           valueListenable: _wsService.latestAiEventNotifier,
-          builder: (context, aiEvent, _) {
-            return AiEventBanner(event: aiEvent);
-          },
+          builder: (context, e, _) => AiEventBanner(event: e),
         ),
         const SizedBox(height: 12),
 
-        // Telemetry Grid
-        // 1. GPS Coordinates
+        _sectionTitle('Telemetry'),
+        const SizedBox(height: 8),
         ValueListenableBuilder<Position?>(
           valueListenable: _gpsService.currentPositionNotifier,
           builder: (context, pos, _) {
-            final lat = pos != null ? pos.latitude.toStringAsFixed(4) : '0.0000';
-            final lng = pos != null ? pos.longitude.toStringAsFixed(4) : '0.0000';
+            final lat = pos?.latitude.toStringAsFixed(4) ?? '0.0000';
+            final lng = pos?.longitude.toStringAsFixed(4) ?? '0.0000';
             return TelemetryTile(
-              title: 'GPS Coordinates',
+              title: 'Coordinates',
               value: '$lat, $lng',
-              icon: Icons.navigation_rounded,
-              accentColor: primaryCyan,
+              icon: Icons.my_location_rounded,
+              accentColor: AppColors.brand,
             );
           },
         ),
         const SizedBox(height: 8),
-
-        // 2. Speed and Accuracy in 2-column row
         Row(
           children: [
             Expanded(
               child: ValueListenableBuilder<double>(
                 valueListenable: _gpsService.speedKmhNotifier,
-                builder: (context, speed, _) {
-                  return TelemetryTile(
-                    title: 'Speed',
-                    value: speed.toStringAsFixed(1),
-                    unit: 'km/h',
-                    icon: Icons.speed_rounded,
-                    accentColor: neonGreen,
-                  );
-                },
+                builder: (context, v, _) => TelemetryTile(
+                  title: 'Speed',
+                  value: v.toStringAsFixed(1),
+                  unit: 'km/h',
+                  icon: Icons.speed_rounded,
+                  accentColor: AppColors.go,
+                ),
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
               child: ValueListenableBuilder<double>(
                 valueListenable: _gpsService.accuracyNotifier,
-                builder: (context, accuracy, _) {
-                  return TelemetryTile(
-                    title: 'Accuracy',
-                    value: '±${accuracy.toStringAsFixed(1)}',
-                    unit: 'm',
-                    icon: Icons.gps_fixed_rounded,
-                    accentColor: primaryCyan,
-                  );
-                },
+                builder: (context, v, _) => TelemetryTile(
+                  title: 'Accuracy',
+                  value: '±${v.toStringAsFixed(1)}',
+                  unit: 'm',
+                  icon: Icons.gps_fixed_rounded,
+                  accentColor: AppColors.brand,
+                ),
               ),
             ),
           ],
         ),
         const SizedBox(height: 8),
-
-        // 3. Frames Sent & GPS Packets Sent Counters
         Row(
           children: [
             Expanded(
               child: ValueListenableBuilder<int>(
                 valueListenable: _wsService.framesSentNotifier,
-                builder: (context, frames, _) {
-                  return TelemetryTile(
-                    title: 'Frames Sent',
-                    value: frames.toString(),
-                    unit: 'pkts',
-                    icon: Icons.video_file_outlined,
-                    accentColor: primaryCyan,
-                  );
-                },
+                builder: (context, v, _) => TelemetryTile(
+                  title: 'Frames sent',
+                  value: '$v',
+                  icon: Icons.movie_outlined,
+                  accentColor: AppColors.brand,
+                ),
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
               child: ValueListenableBuilder<int>(
                 valueListenable: _wsService.gpsSentNotifier,
-                builder: (context, gpsCount, _) {
-                  return TelemetryTile(
-                    title: 'GPS Sent',
-                    value: gpsCount.toString(),
-                    unit: 'pkts',
-                    icon: Icons.satellite_alt_rounded,
-                    accentColor: neonGreen,
-                  );
-                },
+                builder: (context, v, _) => TelemetryTile(
+                  title: 'GPS sent',
+                  value: '$v',
+                  icon: Icons.satellite_alt_outlined,
+                  accentColor: AppColors.go,
+                ),
               ),
             ),
           ],
         ),
         const SizedBox(height: 18),
 
-        // Action Buttons: START & STOP
         Row(
           children: [
-            // START Button
             Expanded(
-              child: ElevatedButton.icon(
+              child: Pressable(
                 onPressed: _isStreaming ? null : _onStart,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: neonGreen,
-                  foregroundColor: const Color(0xFF0A0E17),
-                  disabledBackgroundColor: const Color(0xFF1E293B),
-                  disabledForegroundColor: const Color(0xFF475569),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  elevation: _isStreaming ? 0 : 4,
-                  shadowColor: neonGreen.withValues(alpha: 0.4),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                icon: const Icon(Icons.play_arrow_rounded, size: 22),
-                label: const Text(
-                  'START',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.0,
-                  ),
+                color: AppColors.go,
+                pressedColor: AppColors.goPressed,
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.play_arrow_rounded, size: 20),
+                    SizedBox(width: 6),
+                    Text('Start stream'),
+                  ],
                 ),
               ),
             ),
             const SizedBox(width: 12),
-
-            // STOP Button
             Expanded(
-              child: ElevatedButton.icon(
-                onPressed: !_isStreaming ? null : _onStop,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: dangerRed,
-                  foregroundColor: Colors.white,
-                  disabledBackgroundColor: const Color(0xFF1E293B),
-                  disabledForegroundColor: const Color(0xFF475569),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  elevation: !_isStreaming ? 0 : 4,
-                  shadowColor: dangerRed.withValues(alpha: 0.4),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                icon: const Icon(Icons.stop_rounded, size: 22),
-                label: const Text(
-                  'STOP',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.0,
-                  ),
+              child: Pressable(
+                onPressed: _isStreaming ? _onStop : null,
+                color: AppColors.stop,
+                pressedColor: AppColors.stopPressed,
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.stop_rounded, size: 20),
+                    SizedBox(width: 6),
+                    Text('Stop'),
+                  ],
                 ),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 18),
 
-        // In-App Live Terminal / Diagnostic Log Monitor
-        if (_showLogConsole) ...[
-          LiveLogConsole(
-            maxHeight: 220,
-            isCollapsible: true,
-            onClose: () => setState(() => _showLogConsole = false),
-          ),
-          const SizedBox(height: 16),
-        ],
+        AnimatedSize(
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOut,
+          alignment: Alignment.topCenter,
+          child: _showLogConsole
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _sectionTitle('Live monitor'),
+                    const SizedBox(height: 8),
+                    LiveLogConsole(
+                      maxHeight: 220,
+                      onClose: () => setState(() => _showLogConsole = false),
+                    ),
+                  ],
+                )
+              : const SizedBox(width: double.infinity),
+        ),
       ],
+    );
+  }
+
+  Widget _sectionTitle(String text) {
+    return Text(
+      text,
+      style: const TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w700,
+        color: AppColors.ink,
+        letterSpacing: -0.1,
+      ),
     );
   }
 }

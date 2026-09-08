@@ -21,7 +21,9 @@ class WebSocketService {
   Timer? _reconnectTimer;
 
   String? _currentUrl;
+  String _vehicleId = 'UNKNOWN';
   bool _shouldBeConnected = false;
+  bool _streamStarted = false;
   int _reconnectAttempts = 0;
   static const int _maxReconnectDelaySec = 10;
 
@@ -38,21 +40,36 @@ class WebSocketService {
   final ValueNotifier<AiEvent?> latestAiEventNotifier = ValueNotifier<AiEvent?>(null);
 
   WebSocketConnectionStatus get status => statusNotifier.value;
-  bool get isConnected => statusNotifier.value == WebSocketConnectionStatus.connected;
 
-  /// Connects to the given WebSocket URL.
-  Future<void> connect(String url) async {
+  /// True only once the socket is open AND the START_STREAM handshake has been
+  /// sent — frame / GPS packets must not go out before that.
+  bool get isConnected =>
+      statusNotifier.value == WebSocketConnectionStatus.connected && _streamStarted;
+
+  /// Connects to the given WebSocket URL and performs the START_STREAM handshake.
+  Future<void> connect(String url, {required String vehicleId}) async {
     _currentUrl = url.trim();
+    _vehicleId = vehicleId;
     _shouldBeConnected = true;
     _reconnectAttempts = 0;
     LogService.info('WebSocket', 'Initiating connection to $_currentUrl');
-    _doConnect();
+    await _doConnect();
   }
 
-  void _doConnect() {
+  /// The backend requires this as the very first message on the socket; sending
+  /// a frame or GPS packet first makes it reply {"type":"ERROR"} and hang up.
+  /// Adjust the shape here if the server expects a different handshake.
+  String _startStreamMessage() => json.encode({
+        'type': 'START_STREAM',
+        'vehicle_id': _vehicleId,
+        'timestamp': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      });
+
+  Future<void> _doConnect() async {
     if (!_shouldBeConnected || _currentUrl == null || _currentUrl!.isEmpty) return;
 
     _cleanupSocket();
+    _streamStarted = false;
 
     if (_reconnectAttempts > 0) {
       statusNotifier.value = WebSocketConnectionStatus.reconnecting;
@@ -65,20 +82,16 @@ class WebSocketService {
 
     try {
       final uri = Uri.parse(_currentUrl!);
-      _channel = WebSocketChannel.connect(uri);
+      final channel = WebSocketChannel.connect(uri);
+      _channel = channel;
 
-      // Listen for socket connection & messages
-      _subscription = _channel!.stream.listen(
-        (data) {
-          if (statusNotifier.value != WebSocketConnectionStatus.connected) {
-            statusNotifier.value = WebSocketConnectionStatus.connected;
-            _reconnectAttempts = 0;
-            LogService.info('WebSocket', '🟢 Connected successfully to $_currentUrl');
-          }
-          _handleInboundMessage(data);
-        },
+      _subscription = channel.stream.listen(
+        _handleInboundMessage,
         onDone: () {
-          LogService.warn('WebSocket', 'Connection closed by remote server.');
+          LogService.warn(
+            'WebSocket',
+            'Connection closed by remote server (code: ${channel.closeCode ?? 'n/a'}).',
+          );
           _handleDisconnect();
         },
         onError: (error, stackTrace) {
@@ -89,13 +102,20 @@ class WebSocketService {
         cancelOnError: true,
       );
 
-      // In web_socket_channel, stream listen triggers connect
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (_shouldBeConnected && statusNotifier.value == WebSocketConnectionStatus.connecting) {
-          statusNotifier.value = WebSocketConnectionStatus.connected;
-          LogService.info('WebSocket', '🟢 Handshake established with $_currentUrl');
-        }
-      });
+      // Wait for the real WebSocket upgrade before sending anything.
+      await channel.ready;
+      if (_channel != channel || !_shouldBeConnected) return; // superseded
+
+      // Handshake FIRST, then the console may start streaming.
+      channel.sink.add(_startStreamMessage());
+      _streamStarted = true;
+      _reconnectAttempts = 0;
+      statusNotifier.value = WebSocketConnectionStatus.connected;
+      LogService.wsOut(
+        'WebSocket',
+        '🟢 Connected — START_STREAM sent for $_vehicleId',
+        payload: _startStreamMessage(),
+      );
     } catch (e, stackTrace) {
       LogService.error('WebSocket', 'Exception during connection setup', error: e, stackTrace: stackTrace);
       errorNotifier.value = e.toString();
@@ -104,6 +124,7 @@ class WebSocketService {
   }
 
   void _handleDisconnect() {
+    _streamStarted = false;
     statusNotifier.value = WebSocketConnectionStatus.disconnected;
     if (_shouldBeConnected) {
       _scheduleReconnect();
@@ -119,7 +140,7 @@ class WebSocketService {
 
     _reconnectTimer = Timer(Duration(seconds: delaySeconds), () {
       if (_shouldBeConnected) {
-        _doConnect();
+        unawaited(_doConnect());
       }
     });
   }
@@ -180,7 +201,11 @@ class WebSocketService {
       final Map<String, dynamic> jsonMap = json.decode(text) as Map<String, dynamic>;
 
       final type = jsonMap['type'] as String?;
-      if (type == 'ai_event' || jsonMap.containsKey('event')) {
+      if (type != null && type.toUpperCase() == 'ERROR') {
+        final message = jsonMap['message']?.toString() ?? 'Unknown server error';
+        LogService.warn('WebSocket', 'Server rejected stream: $message');
+        errorNotifier.value = message;
+      } else if (type == 'ai_event' || jsonMap.containsKey('event')) {
         final event = AiEvent.fromMap(jsonMap);
         latestAiEventNotifier.value = event;
         _aiEventController.add(event);
@@ -211,6 +236,7 @@ class WebSocketService {
   }
 
   void _cleanupSocket() {
+    _streamStarted = false;
     _subscription?.cancel();
     _subscription = null;
     try {

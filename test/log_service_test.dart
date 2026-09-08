@@ -43,13 +43,13 @@ void main() {
       ),
     );
 
-    expect(find.text('LIVE MONITOR & LOGS'), findsOneWidget);
-    expect(find.text('ALL'), findsOneWidget);
-    expect(find.text('OUT'), findsOneWidget);
-    expect(find.text('IN'), findsOneWidget);
+    expect(find.text('Live monitor'), findsOneWidget);
+    expect(find.text('All'), findsOneWidget);
+    expect(find.text('Out'), findsOneWidget);
+    expect(find.text('In'), findsOneWidget);
     expect(find.text('GPS'), findsOneWidget);
-    expect(find.text('CAM'), findsOneWidget);
-    expect(find.text('ERR'), findsOneWidget);
+    expect(find.text('Cam'), findsOneWidget);
+    expect(find.text('Errors'), findsOneWidget);
     expect(find.textContaining('Booting application'), findsOneWidget);
   });
 }

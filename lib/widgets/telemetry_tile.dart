@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
 
+/// A single readout in the telemetry grid. Flat with a hairline border so it
+/// stays visually subordinate to the viewfinder hero; the value cross-fades
+/// when it changes so updates are noticed without being distracting.
 class TelemetryTile extends StatelessWidget {
   final String title;
   final String value;
@@ -14,21 +18,18 @@ class TelemetryTile extends StatelessWidget {
     required this.value,
     this.unit,
     required this.icon,
-    this.accentColor = const Color(0xFF00E5FF),
+    this.accentColor = AppColors.brand,
     this.trailing,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
       decoration: BoxDecoration(
-        color: const Color(0xFF131B2A),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: const Color(0xFF22304A),
-          width: 1,
-        ),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadii.tile),
+        border: Border.all(color: AppColors.line),
       ),
       child: Row(
         children: [
@@ -36,13 +37,9 @@ class TelemetryTile extends StatelessWidget {
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
               color: accentColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(9),
             ),
-            child: Icon(
-              icon,
-              color: accentColor,
-              size: 18,
-            ),
+            child: Icon(icon, color: accentColor, size: 18),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -51,30 +48,44 @@ class TelemetryTile extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  title.toUpperCase(),
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.8,
-                    color: Color(0xFF64748B),
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.inkFaint,
                   ),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 3),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.baseline,
                   textBaseline: TextBaseline.alphabetic,
                   children: [
                     Flexible(
-                      child: Text(
-                        value,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          fontFamily: 'monospace',
-                          letterSpacing: 0.5,
-                          color: Color(0xFFF1F5F9),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 260),
+                        transitionBuilder: (child, anim) => FadeTransition(
+                          opacity: anim,
+                          child: SizeTransition(
+                            axis: Axis.vertical,
+                            sizeFactor: anim,
+                            child: child,
+                          ),
                         ),
-                        overflow: TextOverflow.ellipsis,
+                        child: Text(
+                          value,
+                          key: ValueKey(value),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            fontFamily: kMonoFont,
+                            letterSpacing: 0.2,
+                            color: AppColors.ink,
+                          ),
+                        ),
                       ),
                     ),
                     if (unit != null) ...[
