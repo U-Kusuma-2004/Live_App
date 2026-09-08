@@ -11,6 +11,8 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({
       'vehicle_id': 'TRUCK_001',
+      'user_id': 'user-42',
+      'user_name': 'Priya Sharma',
       'websocket_url': 'wss://test.runpod.io/ws',
     });
   });
@@ -22,10 +24,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.text('Fleet live console'), findsOneWidget);
-    expect(find.text('Vehicle name'), findsOneWidget);
+    expect(find.text('Camera / vehicle ID'), findsOneWidget);
+    expect(find.text('Driver name'), findsOneWidget);
+    expect(find.text('User ID'), findsOneWidget);
     expect(find.text('WebSocket endpoint'), findsOneWidget);
     expect(find.text('Start session'), findsOneWidget);
     expect(find.text('TRUCK_001'), findsOneWidget);
+    expect(find.text('Priya Sharma'), findsOneWidget);
+    expect(find.text('user-42'), findsOneWidget);
     expect(find.text('wss://test.runpod.io/ws'), findsOneWidget);
   });
 

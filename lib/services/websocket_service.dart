@@ -3,8 +3,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/ai_event.dart';
-import '../models/frame_payload.dart';
-import '../models/gps_payload.dart';
 import 'log_service.dart';
 
 enum WebSocketConnectionStatus {
@@ -15,15 +13,28 @@ enum WebSocketConnectionStatus {
   error,
 }
 
+/// Talks to the drowsiness-detection backend on `/video`.
+///
+/// Protocol (from the server):
+///   1. Client -> `{"type":"START_STREAM","user_id","user_name","camera_id"}` (JSON text).
+///   2. Server -> `{"type":"STREAM_STARTED",...}` on success, or `{"type":"ERROR",...}` + close.
+///   3. Client -> raw JPEG bytes, one binary frame per image (NOT JSON, NOT base64).
+///   4. Server -> `DETECTION_STATUS` / `DROWSINESS_ALERT` JSON as it analyses frames.
+/// There is no GPS channel — sending anything but bytes after the handshake
+/// breaks the server's `receive_bytes()` loop.
 class WebSocketService {
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
   Timer? _reconnectTimer;
 
   String? _currentUrl;
-  String _vehicleId = 'UNKNOWN';
+  String _userId = '';
+  String _userName = '';
+  String _cameraId = '';
+
   bool _shouldBeConnected = false;
   bool _streamStarted = false;
+  bool _fatalError = false;
   int _reconnectAttempts = 0;
   static const int _maxReconnectDelaySec = 10;
 
@@ -36,37 +47,48 @@ class WebSocketService {
   Stream<AiEvent> get aiEventStream => _aiEventController.stream;
 
   final ValueNotifier<int> framesSentNotifier = ValueNotifier<int>(0);
-  final ValueNotifier<int> gpsSentNotifier = ValueNotifier<int>(0);
+  final ValueNotifier<int> alertsNotifier = ValueNotifier<int>(0);
   final ValueNotifier<AiEvent?> latestAiEventNotifier = ValueNotifier<AiEvent?>(null);
 
   WebSocketConnectionStatus get status => statusNotifier.value;
 
-  /// True only once the socket is open AND the START_STREAM handshake has been
-  /// sent — frame / GPS packets must not go out before that.
+  /// True only once the server has acknowledged the stream with STREAM_STARTED.
+  /// Frames must not be sent before this.
   bool get isConnected =>
       statusNotifier.value == WebSocketConnectionStatus.connected && _streamStarted;
 
-  /// Connects to the given WebSocket URL and performs the START_STREAM handshake.
-  Future<void> connect(String url, {required String vehicleId}) async {
+  /// Connects and performs the START_STREAM handshake, then waits for the
+  /// server's STREAM_STARTED acknowledgement before [isConnected] flips true.
+  Future<void> connect(
+    String url, {
+    required String userId,
+    required String userName,
+    required String cameraId,
+  }) async {
     _currentUrl = url.trim();
-    _vehicleId = vehicleId;
+    _userId = userId.trim();
+    _userName = userName.trim();
+    _cameraId = cameraId.trim();
     _shouldBeConnected = true;
+    _fatalError = false;
     _reconnectAttempts = 0;
     LogService.info('WebSocket', 'Initiating connection to $_currentUrl');
     await _doConnect();
   }
 
-  /// The backend requires this as the very first message on the socket; sending
-  /// a frame or GPS packet first makes it reply {"type":"ERROR"} and hang up.
-  /// Adjust the shape here if the server expects a different handshake.
+  /// The required first message. All three identity fields must be non-empty or
+  /// the server replies {"type":"ERROR"} and closes. Adjust here if the backend
+  /// contract changes.
   String _startStreamMessage() => json.encode({
         'type': 'START_STREAM',
-        'vehicle_id': _vehicleId,
-        'timestamp': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        'user_id': _userId,
+        'user_name': _userName,
+        'camera_id': _cameraId,
       });
 
   Future<void> _doConnect() async {
-    if (!_shouldBeConnected || _currentUrl == null || _currentUrl!.isEmpty) return;
+    if (!_shouldBeConnected || _fatalError) return;
+    if (_currentUrl == null || _currentUrl!.isEmpty) return;
 
     _cleanupSocket();
     _streamStarted = false;
@@ -81,8 +103,7 @@ class WebSocketService {
     errorNotifier.value = null;
 
     try {
-      final uri = Uri.parse(_currentUrl!);
-      final channel = WebSocketChannel.connect(uri);
+      final channel = WebSocketChannel.connect(Uri.parse(_currentUrl!));
       _channel = channel;
 
       _subscription = channel.stream.listen(
@@ -106,14 +127,11 @@ class WebSocketService {
       await channel.ready;
       if (_channel != channel || !_shouldBeConnected) return; // superseded
 
-      // Handshake FIRST, then the console may start streaming.
       channel.sink.add(_startStreamMessage());
-      _streamStarted = true;
-      _reconnectAttempts = 0;
-      statusNotifier.value = WebSocketConnectionStatus.connected;
+      statusNotifier.value = WebSocketConnectionStatus.connecting;
       LogService.wsOut(
         'WebSocket',
-        '🟢 Connected — START_STREAM sent for $_vehicleId',
+        'START_STREAM sent — waiting for server acknowledgement',
         payload: _startStreamMessage(),
       );
     } catch (e, stackTrace) {
@@ -125,10 +143,12 @@ class WebSocketService {
 
   void _handleDisconnect() {
     _streamStarted = false;
-    statusNotifier.value = WebSocketConnectionStatus.disconnected;
-    if (_shouldBeConnected) {
-      _scheduleReconnect();
+    if (_fatalError) {
+      statusNotifier.value = WebSocketConnectionStatus.error;
+      return;
     }
+    statusNotifier.value = WebSocketConnectionStatus.disconnected;
+    if (_shouldBeConnected) _scheduleReconnect();
   }
 
   void _scheduleReconnect() {
@@ -139,90 +159,88 @@ class WebSocketService {
     statusNotifier.value = WebSocketConnectionStatus.reconnecting;
 
     _reconnectTimer = Timer(Duration(seconds: delaySeconds), () {
-      if (_shouldBeConnected) {
-        unawaited(_doConnect());
-      }
+      if (_shouldBeConnected && !_fatalError) unawaited(_doConnect());
     });
   }
 
-  /// Sends a camera video frame
-  bool sendFrame(FramePayload payload) {
+  /// Sends one camera frame as a raw binary JPEG WebSocket message.
+  bool sendFrame(Uint8List jpegBytes, int frameId) {
     if (!isConnected || _channel == null) {
-      LogService.warn('WebSocket', 'Frame #${payload.frameId} dropped (socket not connected)');
+      LogService.warn('WebSocket', 'Frame #$frameId dropped (stream not ready)');
       return false;
     }
     try {
-      final jsonPayload = payload.toJson();
-      _channel!.sink.add(jsonPayload);
+      _channel!.sink.add(jpegBytes);
       framesSentNotifier.value++;
-
-      final kbSize = (payload.image.length / 1024).toStringAsFixed(1);
-      // Detailed API payload log
-      LogService.wsOut(
-        'WebSocket',
-        'Frame #${payload.frameId} sent ($kbSize KB base64)',
-        payload: '{"type":"frame","vehicle_id":"${payload.vehicleId}","frame_id":${payload.frameId},"timestamp":${payload.timestamp},"image_len":${payload.image.length}}',
-      );
+      final kb = (jpegBytes.length / 1024).toStringAsFixed(1);
+      LogService.wsOut('WebSocket', 'Frame #$frameId sent ($kb KB JPEG, binary)');
       return true;
     } catch (e, stackTrace) {
-      LogService.error('WebSocket', 'Failed to transmit Frame #${payload.frameId}', error: e, stackTrace: stackTrace);
+      LogService.error('WebSocket', 'Failed to transmit Frame #$frameId', error: e, stackTrace: stackTrace);
       return false;
     }
   }
 
-  /// Sends a GPS telemetry packet
-  bool sendGps(GpsPayload payload) {
-    if (!isConnected || _channel == null) {
-      LogService.warn('WebSocket', 'GPS packet dropped (socket not connected)');
-      return false;
-    }
-    try {
-      final jsonPayload = payload.toJson();
-      _channel!.sink.add(jsonPayload);
-      gpsSentNotifier.value++;
-
-      // Detailed API payload log
-      LogService.wsOut(
-        'WebSocket',
-        'GPS sent (lat: ${payload.latitude}, lng: ${payload.longitude}, speed: ${payload.speedKmh} km/h)',
-        payload: jsonPayload,
-      );
-      return true;
-    } catch (e, stackTrace) {
-      LogService.error('WebSocket', 'Failed to transmit GPS telemetry', error: e, stackTrace: stackTrace);
-      return false;
-    }
-  }
-
-  /// Handles inbound JSON messages from RunPod backend
   void _handleInboundMessage(dynamic rawData) {
     try {
       final String text = rawData is String ? rawData : utf8.decode(rawData as List<int>);
       final Map<String, dynamic> jsonMap = json.decode(text) as Map<String, dynamic>;
+      final type = (jsonMap['type'] as String?)?.toUpperCase();
 
-      final type = jsonMap['type'] as String?;
-      if (type != null && type.toUpperCase() == 'ERROR') {
-        final message = jsonMap['message']?.toString() ?? 'Unknown server error';
-        LogService.warn('WebSocket', 'Server rejected stream: $message');
-        errorNotifier.value = message;
-      } else if (type == 'ai_event' || jsonMap.containsKey('event')) {
-        final event = AiEvent.fromMap(jsonMap);
-        latestAiEventNotifier.value = event;
-        _aiEventController.add(event);
+      switch (type) {
+        case 'ERROR':
+          final message = jsonMap['message']?.toString() ?? 'Unknown server error';
+          LogService.error('WebSocket', 'Server rejected the stream: $message');
+          errorNotifier.value = message;
+          _fatalError = true; // config problem — retrying won't help
+          _shouldBeConnected = false;
+          _reconnectTimer?.cancel();
+          break;
 
-        // Detailed Response log
-        LogService.wsIn(
-          'WebSocket',
-          '🚨 AI Event: ${event.event} (${event.formattedConfidence}) for ${event.vehicleId}',
-          payload: text,
-        );
-      } else {
-        // Generic server response log
-        LogService.wsIn('WebSocket', 'Inbound message received: $text', payload: text);
+        case 'STREAM_STARTED':
+          _streamStarted = true;
+          _reconnectAttempts = 0;
+          statusNotifier.value = WebSocketConnectionStatus.connected;
+          LogService.wsIn('WebSocket', '🟢 Stream accepted by server', payload: text);
+          break;
+
+        case 'DROWSINESS_ALERT':
+          final event = AiEvent(
+            type: 'ai_event',
+            vehicleId: (jsonMap['camera_id'] ?? _cameraId).toString(),
+            event: (jsonMap['state'] ?? 'drowsy').toString().toUpperCase() == 'DROWSY'
+                ? 'DROWSINESS'
+                : (jsonMap['state'] ?? 'ALERT').toString(),
+            confidence: 1.0,
+            timestamp: _epochSeconds(jsonMap['timestamp']),
+          );
+          latestAiEventNotifier.value = event;
+          _aiEventController.add(event);
+          alertsNotifier.value++;
+          LogService.wsIn('WebSocket', '🚨 Drowsiness alert for ${event.vehicleId}', payload: text);
+          break;
+
+        case 'DETECTION_STATUS':
+        default:
+          // Bare {"state":"normal",...} or DETECTION_STATUS — driver is fine.
+          if ((jsonMap['state']?.toString() ?? '') == 'normal') {
+            latestAiEventNotifier.value = null;
+          } else {
+            LogService.wsIn('WebSocket', 'Server message: $text', payload: text);
+          }
       }
     } catch (e, stackTrace) {
       LogService.error('WebSocket', 'Error parsing inbound message', error: e, stackTrace: stackTrace);
     }
+  }
+
+  int _epochSeconds(dynamic ts) {
+    if (ts is num) return ts.toInt();
+    if (ts is String) {
+      final parsed = DateTime.tryParse(ts);
+      if (parsed != null) return parsed.millisecondsSinceEpoch ~/ 1000;
+    }
+    return DateTime.now().millisecondsSinceEpoch ~/ 1000;
   }
 
   /// Disconnects and stops any reconnection loops.
@@ -245,11 +263,12 @@ class WebSocketService {
     _channel = null;
   }
 
-  /// Reset transmission counters
+  /// Reset transmission counters for a fresh session.
   void resetCounters() {
     framesSentNotifier.value = 0;
-    gpsSentNotifier.value = 0;
+    alertsNotifier.value = 0;
     latestAiEventNotifier.value = null;
+    _fatalError = false;
     LogService.info('WebSocket', 'Transmission counters reset.');
   }
 
@@ -259,7 +278,7 @@ class WebSocketService {
     statusNotifier.dispose();
     errorNotifier.dispose();
     framesSentNotifier.dispose();
-    gpsSentNotifier.dispose();
+    alertsNotifier.dispose();
     latestAiEventNotifier.dispose();
   }
 }

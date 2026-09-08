@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:liveapp/models/ai_event.dart';
-import 'package:liveapp/models/frame_payload.dart';
 import 'package:liveapp/models/gps_payload.dart';
 
 void main() {
@@ -56,41 +55,6 @@ void main() {
       expect(payload.heading, 90.0);
       expect(payload.accuracyM, 3.5);
       expect(payload.timestamp, 1725771234);
-    });
-  });
-
-  group('FramePayload Serialization', () {
-    test('Serializes to expected JSON structure matching prompt specification', () {
-      const payload = FramePayload(
-        vehicleId: 'TRUCK_001',
-        timestamp: 1725770000,
-        frameId: 12345,
-        image: '/9j/4AAQSkZJRgABAQEASABIAAD/...',
-      );
-
-      final map = payload.toMap();
-      expect(map['type'], 'frame');
-      expect(map['vehicle_id'], 'TRUCK_001');
-      expect(map['timestamp'], 1725770000);
-      expect(map['frame_id'], 12345);
-      expect(map['image'], '/9j/4AAQSkZJRgABAQEASABIAAD/...');
-    });
-
-    test('Deserializes correctly from JSON', () {
-      const jsonStr = '''
-      {
-        "type": "frame",
-        "vehicle_id": "TRUCK_003",
-        "timestamp": 1725779999,
-        "frame_id": 999,
-        "image": "base64sample"
-      }
-      ''';
-
-      final payload = FramePayload.fromJson(jsonStr);
-      expect(payload.vehicleId, 'TRUCK_003');
-      expect(payload.frameId, 999);
-      expect(payload.image, 'base64sample');
     });
   });
 

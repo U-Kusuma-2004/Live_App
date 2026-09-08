@@ -1,9 +1,8 @@
+import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import '../models/ai_event.dart';
-import '../models/frame_payload.dart';
-import '../models/gps_payload.dart';
 import '../services/camera_stream_service.dart';
 import '../services/gps_service.dart';
 import '../services/log_service.dart';
@@ -18,12 +17,16 @@ import '../widgets/telemetry_tile.dart';
 import '../widgets/tilt_card.dart';
 
 class LiveStreamScreen extends StatefulWidget {
-  final String vehicleId;
+  final String vehicleId; // sent to the backend as camera_id
+  final String userId;
+  final String userName;
   final String webSocketUrl;
 
   const LiveStreamScreen({
     super.key,
     required this.vehicleId,
+    required this.userId,
+    required this.userName,
     required this.webSocketUrl,
   });
 
@@ -88,15 +91,17 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     setState(() => _isStreaming = true);
     _wsService.resetCounters();
 
-    await _wsService.connect(widget.webSocketUrl, vehicleId: widget.vehicleId);
+    await _wsService.connect(
+      widget.webSocketUrl,
+      userId: widget.userId,
+      userName: widget.userName,
+      cameraId: widget.vehicleId,
+    );
     await _cameraService.startStreaming(
-      vehicleId: widget.vehicleId,
-      onFrame: (FramePayload p) => _wsService.sendFrame(p),
+      onFrame: (Uint8List jpeg, int frameId) => _wsService.sendFrame(jpeg, frameId),
     );
-    _gpsService.startTransmission(
-      vehicleId: widget.vehicleId,
-      onGpsPacket: (GpsPayload p) => _wsService.sendGps(p),
-    );
+    // GPS keeps updating the on-screen telemetry, but this backend only
+    // accepts JPEG frames — it has no GPS channel.
   }
 
   Future<void> _onStop() async {
@@ -105,7 +110,6 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     setState(() => _isStreaming = false);
 
     await _cameraService.stopStreaming();
-    _gpsService.stopTransmission();
     await _wsService.disconnect();
     LogService.info('App', 'Streaming halted cleanly. Console in standby.');
   }
@@ -579,12 +583,12 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
             const SizedBox(width: 8),
             Expanded(
               child: ValueListenableBuilder<int>(
-                valueListenable: _wsService.gpsSentNotifier,
+                valueListenable: _wsService.alertsNotifier,
                 builder: (context, v, _) => TelemetryTile(
-                  title: 'GPS sent',
+                  title: 'Drowsiness alerts',
                   value: '$v',
-                  icon: Icons.satellite_alt_outlined,
-                  accentColor: AppColors.go,
+                  icon: Icons.warning_amber_rounded,
+                  accentColor: v > 0 ? AppColors.stop : AppColors.inkFaint,
                 ),
               ),
             ),

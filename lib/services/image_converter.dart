@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
@@ -33,8 +32,10 @@ class CameraImageData {
   }
 }
 
-/// Converts a CameraImageData to base64 JPEG string inside an isolate.
-String convertCameraImageToBase64Jpeg(CameraImageData data) {
+/// Converts a CameraImageData to raw JPEG bytes inside an isolate. The backend
+/// reads frames with `websocket.receive_bytes()`, so we send the JPEG as a
+/// binary WebSocket frame — no base64, no JSON wrapper.
+Uint8List convertCameraImageToJpegBytes(CameraImageData data) {
   try {
     img.Image? rgbImage;
 
@@ -44,18 +45,16 @@ String convertCameraImageToBase64Jpeg(CameraImageData data) {
     } else if (data.formatGroup == ImageFormatGroup.bgra8888) {
       rgbImage = _convertBGRA8888ToImage(data);
     } else {
-      // Fallback
       rgbImage = _convertYUV420ToImage(data);
     }
 
-    if (rgbImage == null) return '';
+    if (rgbImage == null) return Uint8List(0);
 
-    // Encode to lightweight JPEG (quality 60 is optimal for real-time 720p/480p YOLO streaming)
-    final jpgBytes = img.encodeJpg(rgbImage, quality: 60);
-    return base64Encode(jpgBytes);
+    // Quality 60 keeps ~720x480 frames small enough for real-time streaming.
+    return Uint8List.fromList(img.encodeJpg(rgbImage, quality: 60));
   } catch (e) {
     debugPrint('[ImageConverter] Isolate error: $e');
-    return '';
+    return Uint8List(0);
   }
 }
 

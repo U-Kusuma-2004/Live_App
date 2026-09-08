@@ -15,6 +15,8 @@ class ConfigScreen extends StatefulWidget {
 class _ConfigScreenState extends State<ConfigScreen> {
   final _formKey = GlobalKey<FormState>();
   final _vehicleIdController = TextEditingController();
+  final _userIdController = TextEditingController();
+  final _userNameController = TextEditingController();
   final _webSocketUrlController = TextEditingController();
 
   bool _isLoading = true;
@@ -32,13 +34,15 @@ class _ConfigScreenState extends State<ConfigScreen> {
     if (!mounted) return;
     setState(() {
       _vehicleIdController.text = config['vehicleId'] ?? 'TRUCK_001';
+      _userIdController.text = config['userId'] ?? '';
+      _userNameController.text = config['userName'] ?? '';
       _webSocketUrlController.text =
           config['webSocketUrl'] ?? 'wss://your-server.ngrok-free.app/ws';
       _isLoading = false;
     });
     LogService.info(
       'Config',
-      'Config loaded: VehicleID="${_vehicleIdController.text}", WebSocket="${_webSocketUrlController.text}"',
+      'Config loaded: camera_id="${_vehicleIdController.text}", user_id="${_userIdController.text}", user_name="${_userNameController.text}", WebSocket="${_webSocketUrlController.text}"',
     );
   }
 
@@ -50,11 +54,16 @@ class _ConfigScreenState extends State<ConfigScreen> {
     setState(() => _isSaving = true);
 
     final vehicleId = _vehicleIdController.text.trim();
+    final userId = _userIdController.text.trim();
+    final userName = _userNameController.text.trim();
     final webSocketUrl = _webSocketUrlController.text.trim();
 
-    LogService.info('Config', 'Saving config: VehicleID="$vehicleId", URL="$webSocketUrl"');
+    LogService.info('Config',
+        'Saving config: camera_id="$vehicleId", user_id="$userId", user_name="$userName", URL="$webSocketUrl"');
     await PreferencesService.saveConfig(
       vehicleId: vehicleId,
+      userId: userId,
+      userName: userName,
       webSocketUrl: webSocketUrl,
     );
 
@@ -66,6 +75,8 @@ class _ConfigScreenState extends State<ConfigScreen> {
       MaterialPageRoute(
         builder: (_) => LiveStreamScreen(
           vehicleId: vehicleId,
+          userId: userId,
+          userName: userName,
           webSocketUrl: webSocketUrl,
         ),
       ),
@@ -75,6 +86,8 @@ class _ConfigScreenState extends State<ConfigScreen> {
   @override
   void dispose() {
     _vehicleIdController.dispose();
+    _userIdController.dispose();
+    _userNameController.dispose();
     _webSocketUrlController.dispose();
     super.dispose();
   }
@@ -153,7 +166,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
         ),
         const SizedBox(height: 6),
         const Text(
-          'Stream the vehicle camera and GPS to your AI endpoint, and watch safety events as they happen.',
+          'Stream the vehicle camera to your AI endpoint and get drowsiness alerts back in real time.',
           style: TextStyle(fontSize: 14, color: AppColors.inkSoft, height: 1.45),
         ),
       ],
@@ -172,7 +185,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _fieldLabel(Icons.local_shipping_outlined, 'Vehicle name'),
+          _fieldLabel(Icons.videocam_outlined, 'Camera / vehicle ID'),
           const SizedBox(height: 8),
           TextFormField(
             controller: _vehicleIdController,
@@ -184,7 +197,38 @@ class _ConfigScreenState extends State<ConfigScreen> {
             ),
             decoration: const InputDecoration(hintText: 'e.g. TRUCK_001'),
             validator: (v) =>
-                (v == null || v.trim().isEmpty) ? 'Enter a vehicle name' : null,
+                (v == null || v.trim().isEmpty) ? 'Enter a camera ID' : null,
+          ),
+          const SizedBox(height: 20),
+          _fieldLabel(Icons.person_outline_rounded, 'Driver name'),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: _userNameController,
+            textInputAction: TextInputAction.next,
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 15,
+              color: AppColors.ink,
+            ),
+            decoration: const InputDecoration(hintText: 'e.g. Priya Sharma'),
+            validator: (v) =>
+                (v == null || v.trim().isEmpty) ? 'Enter the driver name' : null,
+          ),
+          const SizedBox(height: 20),
+          _fieldLabel(Icons.badge_outlined, 'User ID'),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: _userIdController,
+            textInputAction: TextInputAction.next,
+            autocorrect: false,
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 15,
+              color: AppColors.ink,
+            ),
+            decoration: const InputDecoration(hintText: 'account or driver id the server expects'),
+            validator: (v) =>
+                (v == null || v.trim().isEmpty) ? 'Enter the user ID your endpoint requires' : null,
           ),
           const SizedBox(height: 20),
           _fieldLabel(Icons.link_rounded, 'WebSocket endpoint'),

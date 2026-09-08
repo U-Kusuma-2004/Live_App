@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
-import '../models/frame_payload.dart';
 import 'image_converter.dart';
 import 'log_service.dart';
 
@@ -37,8 +36,7 @@ class CameraStreamService {
   int _fpsFrameCount = 0;
   int _fpsWindowStartMs = 0;
 
-  void Function(FramePayload payload)? _onFrameCallback;
-  String _vehicleId = '';
+  void Function(Uint8List jpegBytes, int frameId)? _onFrameCallback;
 
   /// Initialize camera hardware (selecting rear camera by default)
   Future<bool> initializeCamera() async {
@@ -85,17 +83,15 @@ class CameraStreamService {
     }
   }
 
-  /// Starts streaming camera frames at ~10 FPS to the callback
+  /// Starts streaming camera frames at ~10 FPS to the callback as JPEG bytes.
   Future<void> startStreaming({
-    required String vehicleId,
-    required void Function(FramePayload payload) onFrame,
+    required void Function(Uint8List jpegBytes, int frameId) onFrame,
   }) async {
     if (_controller == null || !_controller!.value.isInitialized) {
       final ok = await initializeCamera();
       if (!ok) return;
     }
 
-    _vehicleId = vehicleId;
     _onFrameCallback = onFrame;
     _frameId = 0;
     _fpsFrameCount = 0;
@@ -103,7 +99,7 @@ class CameraStreamService {
     frameCountNotifier.value = 0;
     currentFpsNotifier.value = 0.0;
     statusNotifier.value = CameraStreamStatus.streaming;
-    LogService.camera('Camera', 'Started image stream (~10 FPS target, vehicle: $vehicleId)');
+    LogService.camera('Camera', 'Started image stream (~10 FPS target)');
 
     try {
       if (!_controller!.value.isStreamingImages) {
@@ -138,23 +134,15 @@ class CameraStreamService {
     // Prepare detached data for isolate execution
     final imageData = CameraImageData.fromCameraImage(image);
 
-    // Run YUV/BGRA to Base64 JPEG conversion in background isolate
-    compute(convertCameraImageToBase64Jpeg, imageData).then((base64String) {
+    // Run YUV/BGRA -> JPEG conversion in a background isolate
+    compute(convertCameraImageToJpegBytes, imageData).then((jpegBytes) {
       _isProcessingFrame = false;
-      if (!isStreaming || base64String.isEmpty) return;
-
-      final nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      final payload = FramePayload(
-        vehicleId: _vehicleId,
-        timestamp: nowSec,
-        frameId: currentFrameId,
-        image: base64String,
-      );
+      if (!isStreaming || jpegBytes.isEmpty) return;
 
       frameCountNotifier.value = currentFrameId;
       _updateFpsMeter();
 
-      _onFrameCallback?.call(payload);
+      _onFrameCallback?.call(jpegBytes, currentFrameId);
     }).catchError((err, stackTrace) {
       _isProcessingFrame = false;
       LogService.error('Camera', 'Frame encoding isolate failed (Frame #$currentFrameId)', error: err, stackTrace: stackTrace);
