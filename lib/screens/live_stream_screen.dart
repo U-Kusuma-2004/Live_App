@@ -44,6 +44,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
   bool _isInitializing = true;
   bool _isStreaming = false;
   bool _showLogConsole = true;
+  bool _switchingCamera = false;
 
   @override
   void initState() {
@@ -102,6 +103,13 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     );
     // GPS keeps updating the on-screen telemetry, but this backend only
     // accepts JPEG frames — it has no GPS channel.
+  }
+
+  Future<void> _onSwitchCamera() async {
+    if (_switchingCamera || !_cameraService.canSwitchCamera) return;
+    setState(() => _switchingCamera = true);
+    await _cameraService.switchCamera();
+    if (mounted) setState(() => _switchingCamera = false);
   }
 
   Future<void> _onStop() async {
@@ -367,7 +375,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (_cameraService.isReady && controller != null)
+        if (_cameraService.isReady && controller != null && !_switchingCamera)
           FittedBox(
             fit: BoxFit.cover,
             clipBehavior: Clip.hardEdge,
@@ -378,14 +386,14 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
             ),
           )
         else
-          const Center(
+          Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.videocam_off_outlined, size: 38, color: Color(0xFF56606E)),
-                SizedBox(height: 10),
-                Text('Camera warming up…',
-                    style: TextStyle(color: Color(0xFF7A8494), fontSize: 12)),
+                const Icon(Icons.videocam_off_outlined, size: 38, color: Color(0xFF56606E)),
+                const SizedBox(height: 10),
+                Text(_switchingCamera ? 'Switching camera…' : 'Camera warming up…',
+                    style: const TextStyle(color: Color(0xFF7A8494), fontSize: 12)),
               ],
             ),
           ),
@@ -430,6 +438,53 @@ class _LiveStreamScreenState extends State<LiveStreamScreen> {
             ),
           ),
         ),
+
+        // Front / back camera toggle.
+        if (_cameraService.canSwitchCamera)
+          Positioned(
+            bottom: 12,
+            right: 12,
+            child: ValueListenableBuilder<CameraLensDirection>(
+              valueListenable: _cameraService.lensDirectionNotifier,
+              builder: (context, lens, _) {
+                return Material(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  shape: const StadiumBorder(),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: _switchingCamera ? null : _onSwitchCamera,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: _switchingCamera
+                                ? const CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white)
+                                : const Icon(Icons.cameraswitch_rounded,
+                                    size: 14, color: Colors.white),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            lens == CameraLensDirection.front ? 'Front' : 'Back',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: kMonoFont,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
       ],
     );
   }

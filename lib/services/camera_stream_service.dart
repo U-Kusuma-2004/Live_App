@@ -16,6 +16,7 @@ class CameraStreamService {
   CameraController? _controller;
   List<CameraDescription> _cameras = [];
   CameraDescription? _selectedCamera;
+  bool _isSwitching = false;
 
   final ValueNotifier<CameraStreamStatus> statusNotifier =
       ValueNotifier<CameraStreamStatus>(CameraStreamStatus.uninitialized);
@@ -23,9 +24,18 @@ class CameraStreamService {
   final ValueNotifier<double> currentFpsNotifier = ValueNotifier<double>(0.0);
   final ValueNotifier<int> frameCountNotifier = ValueNotifier<int>(0);
 
+  /// Which lens the preview is currently using, so the UI can label the toggle.
+  final ValueNotifier<CameraLensDirection> lensDirectionNotifier =
+      ValueNotifier<CameraLensDirection>(CameraLensDirection.back);
+
   CameraController? get controller => _controller;
   bool get isReady => _controller != null && _controller!.value.isInitialized;
   bool get isStreaming => statusNotifier.value == CameraStreamStatus.streaming;
+  bool get isSwitchingCamera => _isSwitching;
+
+  /// True when the device has both a front and a back sensor to toggle between.
+  bool get canSwitchCamera =>
+      _cameras.map((c) => c.lensDirection).toSet().length > 1;
 
   int _frameId = 0;
   bool _isProcessingFrame = false;
@@ -56,30 +66,93 @@ class CameraStreamService {
       LogService.info('Camera', 'Found ${_cameras.length} camera(s). Choosing rear sensor.');
 
       // Select rear camera if available, otherwise first camera
-      _selectedCamera = _cameras.firstWhere(
+      final target = _cameras.firstWhere(
         (cam) => cam.lensDirection == CameraLensDirection.back,
         orElse: () => _cameras.first,
       );
-
-      _controller = CameraController(
-        _selectedCamera!,
-        ResolutionPreset.medium, // 720p / 480p ideal for real-time edge streaming
-        enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.yuv420,
-      );
-
-      await _controller!.initialize();
-      statusNotifier.value = CameraStreamStatus.ready;
-      LogService.info(
-        'Camera',
-        'Camera ready (${_selectedCamera!.lensDirection.name}, preview size: ${_controller!.value.previewSize})',
-      );
-      return true;
+      return _openCamera(target);
     } catch (e, stackTrace) {
       LogService.error('Camera', 'Failed to initialize camera hardware', error: e, stackTrace: stackTrace);
       statusNotifier.value = CameraStreamStatus.error;
       errorNotifier.value = e.toString();
       return false;
+    }
+  }
+
+  /// Disposes any current controller and opens [camera].
+  Future<bool> _openCamera(CameraDescription camera) async {
+    try {
+      await _controller?.dispose();
+      _controller = null;
+
+      final controller = CameraController(
+        camera,
+        ResolutionPreset.medium, // 720p / 480p ideal for real-time edge streaming
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.yuv420,
+      );
+      await controller.initialize();
+
+      _controller = controller;
+      _selectedCamera = camera;
+      lensDirectionNotifier.value = camera.lensDirection;
+      statusNotifier.value =
+          isStreaming ? CameraStreamStatus.streaming : CameraStreamStatus.ready;
+      errorNotifier.value = null;
+      LogService.info(
+        'Camera',
+        'Camera ready (${camera.lensDirection.name}, preview size: ${controller.value.previewSize})',
+      );
+      return true;
+    } catch (e, stackTrace) {
+      LogService.error('Camera', 'Failed to open ${camera.lensDirection.name} camera',
+          error: e, stackTrace: stackTrace);
+      statusNotifier.value = CameraStreamStatus.error;
+      errorNotifier.value = e.toString();
+      return false;
+    }
+  }
+
+  /// Toggles between the front and back sensor. Keeps streaming across the swap
+  /// if a stream is active.
+  Future<void> switchCamera() async {
+    if (_isSwitching || !canSwitchCamera) return;
+    _isSwitching = true;
+    try {
+      final current = _selectedCamera?.lensDirection ?? CameraLensDirection.back;
+      final wantFront = current != CameraLensDirection.front;
+      final next = _cameras.firstWhere(
+        (c) => wantFront
+            ? c.lensDirection == CameraLensDirection.front
+            : c.lensDirection == CameraLensDirection.back,
+        orElse: () => _cameras.firstWhere(
+          (c) => c.lensDirection != current,
+          orElse: () => _selectedCamera!,
+        ),
+      );
+      if (next.lensDirection == current) return;
+
+      LogService.camera('Camera', 'Switching to ${next.lensDirection.name} camera');
+      final wasStreaming = isStreaming;
+
+      if (_controller?.value.isStreamingImages ?? false) {
+        try {
+          await _controller!.stopImageStream();
+        } catch (_) {}
+      }
+
+      final ok = await _openCamera(next);
+      if (ok && wasStreaming && _onFrameCallback != null) {
+        _isProcessingFrame = false;
+        try {
+          await _controller!.startImageStream(_handleCameraImage);
+        } catch (e, stackTrace) {
+          LogService.error('Camera', 'Failed to resume stream after switch',
+              error: e, stackTrace: stackTrace);
+        }
+      }
+    } finally {
+      _isSwitching = false;
     }
   }
 
@@ -188,5 +261,6 @@ class CameraStreamService {
     errorNotifier.dispose();
     currentFpsNotifier.dispose();
     frameCountNotifier.dispose();
+    lensDirectionNotifier.dispose();
   }
 }
